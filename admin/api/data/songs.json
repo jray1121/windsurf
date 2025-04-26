@@ -1,0 +1,101 @@
+[
+  {
+    "id": "d446cce3-e80a-46c4-9e0a-de26156a020d",
+    "title": "The Ocean",
+    "voicing": "ttb",
+    "tracks": [
+      {
+        "id": "84476d25-942a-4cff-b34a-7f390660651f",
+        "type": "click",
+        "filePath": "/uploads/dfbc6a09-c2db-4eab-8528-054dbfa6e1df.mp3",
+        "originalName": "The Ocean - CLICK.mp3",
+        "timeSignature": "4/4",
+        "beatValue": "1/4",
+        "uploadedAt": "2025-04-25T19:29:06.528Z"
+      },
+      {
+        "id": "a3da716a-1215-4d75-946e-f631eac4d87e",
+        "type": "piano",
+        "filePath": "/uploads/afc13dbc-ea68-41f4-bd52-770ef523ea9c.mp3",
+        "originalName": "The Ocean - PIANO.mp3",
+        "timeSignature": "4/4",
+        "beatValue": "1/4",
+        "uploadedAt": "2025-04-25T19:29:06.529Z"
+      },
+      {
+        "id": "20a02b42-1e15-4d10-bbdf-727070716891",
+        "type": "all_vocals",
+        "filePath": "/uploads/84ab8d39-1b4e-403d-892b-55f5998cb721.mp3",
+        "originalName": "The Ocean - ALL PARTS.mp3",
+        "timeSignature": "4/4",
+        "beatValue": "1/4",
+        "uploadedAt": "2025-04-25T19:29:06.531Z"
+      }
+    ],
+    "createdAt": "2025-04-25T19:29:06.528Z",
+    "updatedAt": "2025-04-25T19:29:06.531Z"
+  },
+  {
+    "id": "db801b30-ee6f-4aa6-86e6-88b86025b156",
+    "title": "The Ocean 2",
+    "voicing": "ttb",
+    "tracks": [
+      {
+        "id": "0a3a3a84-eac7-4224-84fe-4cea855c4b8b",
+        "type": "click",
+        "filePath": "/uploads/68b55266-2d64-4992-abda-25296d2209b2.mp3",
+        "originalName": "The Ocean - CLICK.mp3",
+        "timeSignature": "4/4",
+        "beatValue": "quarter",
+        "uploadedAt": "2025-04-26T17:20:19.303Z"
+      },
+      {
+        "id": "dfff44be-54ed-45ab-949d-f69b8eee6d4e",
+        "type": "piano",
+        "filePath": "/uploads/96db1cc4-fff2-4e4f-be52-9b1e636d2548.mp3",
+        "originalName": "The Ocean - PIANO.mp3",
+        "timeSignature": "4/4",
+        "beatValue": "quarter",
+        "uploadedAt": "2025-04-26T17:20:19.303Z"
+      },
+      {
+        "id": "b58133b9-4fa7-4a42-856d-4dc54885b05b",
+        "type": "all_vocals",
+        "filePath": "/uploads/7b3b912f-987e-4e67-961e-e9f4caa4527f.mp3",
+        "originalName": "The Ocean - ALL PARTS.mp3",
+        "timeSignature": "4/4",
+        "beatValue": "quarter",
+        "uploadedAt": "2025-04-26T17:20:19.303Z"
+      },
+      {
+        "id": "4a596c5e-4d53-4523-8554-4ddada4ea37c",
+        "type": "tenor_1",
+        "filePath": "/uploads/9f26a7ec-df7c-4c47-871a-a983416d06a7.mp3",
+        "originalName": "The Ocean - TENOR 1.mp3",
+        "timeSignature": "4/4",
+        "beatValue": "quarter",
+        "uploadedAt": "2025-04-26T17:20:19.303Z"
+      },
+      {
+        "id": "482794ba-b13c-4be8-bcda-2ad4f1bbf3be",
+        "type": "tenor_2",
+        "filePath": "/uploads/6d3170ac-dfd1-4895-b964-73d1db951346.mp3",
+        "originalName": "The Ocean - TENOR 2.mp3",
+        "timeSignature": "4/4",
+        "beatValue": "quarter",
+        "uploadedAt": "2025-04-26T17:20:19.303Z"
+      },
+      {
+        "id": "c6ae4cfd-8822-44f2-8fe7-b8488fafcf11",
+        "type": "bass",
+        "filePath": "/uploads/6ddaf61e-e689-40b3-b3b8-a88a8f21cf0b.mp3",
+        "originalName": "The Ocean - BASS.mp3",
+        "timeSignature": "4/4",
+        "beatValue": "quarter",
+        "uploadedAt": "2025-04-26T17:20:19.303Z"
+      }
+    ],
+    "createdAt": "2025-04-26T17:20:19.303Z",
+    "updatedAt": "2025-04-26T17:20:19.303Z"
+  }
+]
