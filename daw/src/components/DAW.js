@@ -16,10 +16,12 @@ const DAW = ({ song }) => {
   const [error, setError] = useState(null);
   const [bpm, setBpm] = useState(120);
   const [beats, setBeats] = useState([]);
+  const [timeSignature, setTimeSignature] = useState('4/4');
+  const [clickEnabled, setClickEnabled] = useState(true);
 
   const audioContext = useRef(null);
-  const audioBuffer = useRef(null);
-  const audioSource = useRef(null);
+  const audioBuffers = useRef({});
+  const audioSources = useRef({});
   const startTime = useRef(0);
   const pauseTime = useRef(0);
   const animationFrame = useRef(null);
@@ -54,10 +56,18 @@ const DAW = ({ song }) => {
         const arrayBuffer = await response.arrayBuffer();
         const clickBuffer = await analysisContext.decodeAudioData(arrayBuffer);
 
+        // Analyze beats with time signature
+        console.log('Click track info:', {
+          timeSignature: clickTrack.timeSignature,
+          beatValue: clickTrack.beatValue
+        });
+
         // Analyze beats
-        const { bpm: detectedBpm, beats: detectedBeats } = await detectBeats(clickBuffer);
+        const { bpm: detectedBpm } = await detectBeats(clickBuffer);
+        console.log('Detected BPM:', detectedBpm);
+        
         setBpm(detectedBpm);
-        setBeats(detectedBeats);
+        setTimeSignature(clickTrack.timeSignature || '4/4');
 
         // Clean up
         await analysisContext.close();
@@ -70,26 +80,37 @@ const DAW = ({ song }) => {
     analyzeClickTrack();
   }, [clickTrack]);
 
-  // Initialize audio context and load piano track
+  // Initialize audio context and load all tracks
   useEffect(() => {
     const initAudio = async () => {
       try {
-        if (!pianoTrack) return;
-
         // Create audio context
         audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
-
-        // Fetch and decode audio file
-        const response = await fetch(`http://localhost:8080${pianoTrack.filePath}`);
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = await audioContext.current.decodeAudioData(arrayBuffer);
         
-        audioBuffer.current = buffer;
-        setDuration(buffer.duration);
+        // Load all available tracks
+        const tracks = [pianoTrack, allVocalsTrack, tenor1Track, tenor2Track, bassTrack, clickTrack].filter(Boolean);
+        
+        // Load each track
+        await Promise.all(tracks.map(async (track) => {
+          try {
+            const response = await fetch(`http://localhost:8080${track.filePath}`);
+            const arrayBuffer = await response.arrayBuffer();
+            const buffer = await audioContext.current.decodeAudioData(arrayBuffer);
+            audioBuffers.current[track.type] = buffer;
+
+            // Set duration based on piano track
+            if (track.type === 'piano') {
+              setDuration(buffer.duration);
+            }
+          } catch (err) {
+            console.error(`Error loading ${track.type} track:`, err);
+          }
+        }));
+
         setIsLoading(false);
       } catch (err) {
-        console.error('Error loading audio:', err);
-        setError('Failed to load audio file');
+        console.error('Error initializing audio:', err);
+        setError('Failed to load audio files');
         setIsLoading(false);
       }
     };
@@ -101,7 +122,7 @@ const DAW = ({ song }) => {
         audioContext.current.close();
       }
     };
-  }, [pianoTrack]);
+  }, [pianoTrack, allVocalsTrack, tenor1Track, tenor2Track, bassTrack, clickTrack]);
 
   // Update current time during playback
   useEffect(() => {
@@ -128,36 +149,69 @@ const DAW = ({ song }) => {
   }, [isPlaying]);
 
   const handlePlay = useCallback(() => {
-    if (!audioContext.current || !audioBuffer.current) return;
+    if (!audioContext.current || Object.keys(audioBuffers.current).length === 0) return;
 
-    // Create new audio source
-    audioSource.current = audioContext.current.createBufferSource();
-    audioSource.current.buffer = audioBuffer.current;
-    audioSource.current.connect(audioContext.current.destination);
+    // Resume audio context if suspended
+    if (audioContext.current.state === 'suspended') {
+      audioContext.current.resume();
+    }
 
-    // Calculate start position
-    const offset = pauseTime.current;
-    startTime.current = audioContext.current.currentTime - offset;
+    // Create and start sources for all loaded tracks
+    Object.entries(audioBuffers.current).forEach(([trackType, buffer]) => {
+      // Create new audio source
+      const source = audioContext.current.createBufferSource();
+      source.buffer = buffer;
 
-    // Start playback
-    audioSource.current.start(0, offset);
+      // Create gain node for volume control
+      const gainNode = audioContext.current.createGain();
+      source.connect(gainNode);
+      gainNode.connect(audioContext.current.destination);
+
+      // Mute click track if disabled
+      if (trackType === 'click') {
+        gainNode.gain.value = clickEnabled ? 1 : 0;
+      }
+
+      // Store source and gain node references
+      audioSources.current[trackType] = { source, gainNode };
+
+      // Calculate start time
+      const offset = pauseTime.current;
+      if (trackType === 'piano') { // Use piano track as time reference
+        startTime.current = audioContext.current.currentTime - offset;
+      }
+
+      // Start playback
+      source.start(0, offset);
+    });
+
     setIsPlaying(true);
   }, []);
 
   const handlePause = useCallback(() => {
-    if (audioSource.current) {
-      audioSource.current.stop();
-      audioSource.current = null;
-    }
-    pauseTime.current = currentTime;
+    if (Object.keys(audioSources.current).length === 0) return;
+
+    // Stop all audio sources
+    Object.values(audioSources.current).forEach(({ source }) => source.stop());
+    
+    // Clear sources
+    audioSources.current = {};
+
+    // Store pause time based on piano track
+    pauseTime.current = audioContext.current.currentTime - startTime.current;
     setIsPlaying(false);
-  }, [currentTime]);
+  }, []);
 
   const handleStop = useCallback(() => {
-    if (audioSource.current) {
-      audioSource.current.stop();
-      audioSource.current = null;
-    }
+    if (Object.keys(audioSources.current).length === 0) return;
+
+    // Stop all audio sources
+    Object.values(audioSources.current).forEach(({ source }) => source.stop());
+    
+    // Clear sources
+    audioSources.current = {};
+
+    // Reset playback state
     pauseTime.current = 0;
     setIsPlaying(false);
     setCurrentTime(0);
@@ -208,10 +262,37 @@ const DAW = ({ song }) => {
             duration={duration}
             isPlaying={isPlaying}
             bpm={bpm}
-            timeSignature={4}
+            timeSignature={timeSignature}
             onSeek={handleSeek}
             beats={beats}
           />
+        </Box>
+
+        {/* Click Track Toggle */}
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Button
+            size="small"
+            variant="text"
+            color={clickEnabled ? "primary" : "inherit"}
+            onClick={() => {
+              setClickEnabled(!clickEnabled);
+              // Update click track volume if playing
+              if (isPlaying && audioSources.current.click) {
+                audioSources.current.click.gainNode.gain.value = !clickEnabled ? 1 : 0;
+              }
+            }}
+            sx={{
+              px: 2,
+              py: 0.5,
+              borderRadius: '16px',
+              backgroundColor: theme => clickEnabled ? theme.palette.primary.main + '10' : 'transparent',
+              '&:hover': {
+                backgroundColor: theme => clickEnabled ? theme.palette.primary.main + '20' : theme.palette.action.hover
+              }
+            }}
+          >
+            {clickEnabled ? '🎯 Click Track' : '⚪ Click Track'}
+          </Button>
         </Box>
 
         {/* Tracks */}
@@ -252,35 +333,37 @@ const DAW = ({ song }) => {
         </Box>
 
         <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
-          {!isPlaying ? (
+          <Stack direction="row" spacing={1}>
+            {!isPlaying ? (
+              <Button 
+                variant="contained" 
+                color="primary" 
+                disabled={!pianoTrack || isLoading}
+                onClick={handlePlay}
+                startIcon={<PlayArrowIcon />}
+              >
+                Play
+              </Button>
+            ) : (
+              <Button 
+                variant="contained" 
+                color="primary" 
+                disabled={!pianoTrack || isLoading}
+                onClick={handlePause}
+                startIcon={<PauseIcon />}
+              >
+                Pause
+              </Button>
+            )}
             <Button 
               variant="contained" 
-              color="primary" 
-              disabled={!pianoTrack || isLoading}
-              onClick={handlePlay}
-              startIcon={<PlayArrowIcon />}
+              disabled={!pianoTrack || (!isPlaying && currentTime === 0)}
+              onClick={handleStop}
+              startIcon={<StopIcon />}
             >
-              Play
+              Stop
             </Button>
-          ) : (
-            <Button 
-              variant="contained" 
-              color="primary" 
-              disabled={!pianoTrack || isLoading}
-              onClick={handlePause}
-              startIcon={<PauseIcon />}
-            >
-              Pause
-            </Button>
-          )}
-          <Button 
-            variant="contained" 
-            disabled={!pianoTrack || (!isPlaying && currentTime === 0)}
-            onClick={handleStop}
-            startIcon={<StopIcon />}
-          >
-            Stop
-          </Button>
+          </Stack>
         </Stack>
       </Box>
     </Paper>

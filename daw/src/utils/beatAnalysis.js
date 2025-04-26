@@ -1,4 +1,4 @@
-export const detectBeats = async (audioBuffer, threshold = 0.15) => {
+export const detectBeats = async (audioBuffer, { threshold = 0.15, beatValue = '1/4', timeSignature = '4/4' } = {}) => {
   // Get audio data
   const rawData = audioBuffer.getChannelData(0); // Use first channel
   const sampleRate = audioBuffer.sampleRate;
@@ -63,16 +63,42 @@ export const detectBeats = async (audioBuffer, threshold = 0.15) => {
     }
   });
   
-  // Calculate BPM
-  const bpm = Math.round(60 / mostCommonInterval);
+  // Parse time signature and beat value
+  const [beatsPerBar, beatUnit] = timeSignature.split('/').map(Number);
+  const [beatValueNumerator, beatValueDenominator] = beatValue.split('/').map(Number);
+
+  // Calculate BPM based on beat value
+  const beatRatio = (beatValueDenominator / beatUnit) * (beatValueNumerator / 1);
+  const rawBpm = Math.round(60 / (mostCommonInterval * beatRatio));
   
   // Ensure BPM is in a reasonable range (60-200)
-  let adjustedBpm = bpm;
+  let adjustedBpm = rawBpm;
   while (adjustedBpm < 60) adjustedBpm *= 2;
   while (adjustedBpm > 200) adjustedBpm /= 2;
+
+  // Calculate beats per measure
+  const beatsPerMeasure = beatsPerBar * (beatUnit / beatValueDenominator);
   
+  // Calculate measure and beat information for each peak
+  const beatInfo = peaks.map(time => {
+    const totalBeats = time * (adjustedBpm / 60);
+    const measure = Math.floor(totalBeats / beatsPerMeasure) + 1;
+    const beat = Math.floor(totalBeats % beatsPerMeasure) + 1;
+    const sixteenth = Math.floor((totalBeats * 4) % 4) + 1;
+
+    return {
+      time,
+      measure,
+      beat,
+      sixteenth
+    };
+  });
+
   return {
     bpm: adjustedBpm,
-    beats: peaks
+    timeSignature,
+    beatValue,
+    beatsPerMeasure,
+    beats: beatInfo
   };
 };

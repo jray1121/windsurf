@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import PropTypes from 'prop-types';
 import { Box } from '@mui/material';
 
@@ -13,9 +13,9 @@ const Timeline = ({
 }) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
-  const animationFrameRef = useRef(null);
   const drawFunctionRef = useRef(null);
-  const isDraggingRef = useRef(false);
+  const animationFrameRef = useRef(null);
+  const [scrollOffset, setScrollOffset] = useState(0);
 
   // Convert time to bars:beats:sixteenths
   const timeToBarsBeatsSixteenths = useCallback((timeInSeconds) => {
@@ -25,7 +25,8 @@ const Timeline = ({
     const sixteenthsPerBeat = 4;
     const totalSixteenths = Math.floor(totalBeats * sixteenthsPerBeat);
     
-    const sixteenthsPerBar = timeSignature * sixteenthsPerBeat;
+    const [beatsPerBar] = timeSignature.split('/').map(Number);
+    const sixteenthsPerBar = beatsPerBar * sixteenthsPerBeat;
     const bars = Math.floor(totalSixteenths / sixteenthsPerBar);
     const remainingSixteenths = totalSixteenths % sixteenthsPerBar;
     
@@ -53,45 +54,87 @@ const Timeline = ({
     return Math.max(0, Math.min(duration, (x - rect.left) / width * duration));
   }, [duration]);
 
+  // Calculate visible duration (12 measures)
+  const visibleDuration = useMemo(() => {
+    return 12 * (60 / bpm) * 4; // 12 measures * seconds per beat * beats per measure
+  }, [bpm]);
+
+  // Handle timeline scrolling with trackpad and seeking with click
+  const handleScroll = useCallback((e) => {
+    if (e.type === 'wheel') {
+      e.preventDefault(); // Prevent default scrolling
+      
+      // Use deltaX for horizontal trackpad gestures
+      const scrollAmount = e.deltaX;
+      const scrollSpeed = 0.5; // Adjust sensitivity for smooth scrolling
+      const pixelsPerSecond = canvasRef.current.getBoundingClientRect().width / visibleDuration;
+      
+      setScrollOffset(prev => {
+        const newOffset = prev + (scrollAmount * scrollSpeed) / pixelsPerSecond;
+        const maxOffset = Math.max(0, duration - visibleDuration);
+        return Math.max(0, Math.min(newOffset, maxOffset));
+      });
+    }
+  }, [duration, visibleDuration, bpm]);
+
+  const handleClick = useCallback((e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    
+    // Only handle clicks in the timeline area (below top padding)
+    if (y > 24) {
+      const x = e.clientX - rect.left;
+      const time = xToTime(x + scrollOffset);
+      onSeek(time);
+    }
+  }, [onSeek, xToTime, scrollOffset]);
+
+
+
   // Handle mouse events
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const handleMouseDown = (e) => {
-      const time = xToTime(e.clientX);
-      onSeek(time);
-
-      const handleMouseMove = (e) => {
-        const time = xToTime(e.clientX);
-        onSeek(time);
-      };
-
-      const handleMouseUp = () => {
-        document.removeEventListener('mousemove', handleMouseMove);
-        document.removeEventListener('mouseup', handleMouseUp);
-      };
-
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-    };
-
-    container.addEventListener('mousedown', handleMouseDown);
+    // Add event listeners for trackpad scrolling and clicking
+    container.addEventListener('wheel', handleScroll, { passive: false });
+    container.addEventListener('click', handleClick);
 
     return () => {
-      container.removeEventListener('mousedown', handleMouseDown);
+      container.removeEventListener('wheel', handleScroll);
+      container.removeEventListener('click', handleClick);
     };
-  }, [onSeek, xToTime]);
+  }, [handleScroll, handleClick]);
 
-  // Calculate beat positions
+  // Calculate measure positions
+  const measurePositions = useMemo(() => {
+    const [beatsPerBar] = timeSignature.split('/').map(Number);
+    const secondsPerBeat = 60 / bpm;
+    const secondsPerMeasure = secondsPerBeat * beatsPerBar;
+    const measureCount = Math.ceil(duration / secondsPerMeasure);
+    
+    return Array.from({ length: measureCount }, (_, i) => ({
+      time: i * secondsPerMeasure,
+      measureNumber: i + 1
+    }));
+  }, [bpm, duration, timeSignature]);
+
+  // Calculate beat positions for each measure
   const beatPositions = useMemo(() => {
-    if (!beats || beats.length === 0) {
-      // If no beats detected, create evenly spaced beats based on BPM
-      const beatCount = Math.ceil(duration / (60 / bpm));
-      return Array.from({ length: beatCount }, (_, i) => i * (60 / bpm));
-    }
-    return beats;
-  }, [beats, bpm, duration]);
+    const [beatsPerBar] = timeSignature.split('/').map(Number);
+    const secondsPerBeat = 60 / bpm;
+    const beatCount = Math.ceil(duration / secondsPerBeat);
+    
+    return Array.from({ length: beatCount }, (_, i) => ({
+      time: i * secondsPerBeat,
+      isMeasureStart: i % beatsPerBar === 0,
+      measureNumber: Math.floor(i / beatsPerBar) + 1
+    }));
+  }, [bpm, duration, timeSignature]);
+
+  // Constants
+  const numberHeight = 20; // Space for measure numbers at bottom
+  const topPadding = 24; // Space for timestamp above timeline
 
   // Draw timeline
   useEffect(() => {
@@ -116,65 +159,109 @@ const Timeline = ({
       ctx.fillStyle = '#2a2a2a';
       ctx.fillRect(0, 0, width, height);
 
-      // Draw grid lines
+      // Draw separator line below timestamp
+      ctx.strokeStyle = '#3a3a3a';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, topPadding);
+      ctx.lineTo(width, topPadding);
+      ctx.stroke();
+
+      // Draw grid background
       ctx.strokeStyle = '#3a3a3a';
       ctx.lineWidth = 1;
 
-      // Calculate pixels per second
-      const pixelsPerSecond = width / duration;
+          // Calculate timing for 12 measures
+      const [beatsPerBar] = timeSignature.split('/').map(Number);
+      const secondsPerBeat = 60 / bpm;
+      const secondsPerMeasure = secondsPerBeat * beatsPerBar;
+      const totalMeasuresShown = 12;
+      const visibleDuration = secondsPerMeasure * totalMeasuresShown;
+      const scrollPosition = Math.floor(currentTime / visibleDuration) * visibleDuration;
+      
+      // Calculate pixels per second to show exactly 12 measures
+      const pixelsPerSecond = width / visibleDuration;
 
-      // Draw beat markers
-      beatPositions.forEach((beatTime, index) => {
-        const x = beatTime * pixelsPerSecond;
+      // Draw beat lines and measure numbers for visible range
+      beatPositions.forEach(({ time, isMeasureStart, measureNumber }) => {
+        // Adjust time relative to scroll offset
+        const adjustedTime = time - scrollOffset;
+        const x = adjustedTime * pixelsPerSecond;
         
-        // Skip if outside visible area
-        if (x < 0 || x > width) return;
-
-        const isMeasureStart = index % timeSignature === 0;
+        // Skip if outside visible area or not in current 12-measure window
+        if (x < 0 || x > width || adjustedTime < 0 || adjustedTime > visibleDuration) return;
         
         // Draw beat line
-        ctx.strokeStyle = isMeasureStart ? '#5a5a5a' : '#3a3a3a';
-        ctx.lineWidth = isMeasureStart ? 2 : 1;
+        ctx.strokeStyle = isMeasureStart ? '#808080' : '#404040';
+        ctx.lineWidth = isMeasureStart ? 3 : 1;
         ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, height);
+        ctx.moveTo(x, topPadding);
+        ctx.lineTo(x, height - numberHeight);
         ctx.stroke();
 
-        // Draw measure number
+        // Draw measure number on measure start
         if (isMeasureStart) {
-          const measureNumber = Math.floor(index / timeSignature) + 1;
           ctx.fillStyle = '#808080';
-          ctx.font = '10px monospace';
+          ctx.font = '16px monospace';
           ctx.textAlign = 'center';
-          ctx.fillText(measureNumber, x, height - 4);
+          ctx.fillText(measureNumber.toString(), x, height - 4);
         }
       });
 
-      // Draw current time
-      const minutes = Math.floor(currentTime / 60);
-      const seconds = Math.floor(currentTime % 60);
-      const timeText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-      ctx.fillStyle = '#808080';
-      ctx.font = '10px monospace';
-      ctx.textAlign = 'left';
-      ctx.fillText(timeText, 4, 12);
+      // Calculate current position in bars:beats:sixteenths
+      const beatsPerSecond = bpm / 60;
+      const totalBeats = currentTime * beatsPerSecond;
+      const sixteenthsPerBeat = 4;
+      const totalSixteenths = Math.floor(totalBeats * sixteenthsPerBeat);
+      
+      const sixteenthsPerBar = Number(timeSignature.split('/')[0]) * sixteenthsPerBeat;
+      const bars = Math.floor(totalSixteenths / sixteenthsPerBar);
+      const remainingSixteenths = totalSixteenths % sixteenthsPerBar;
+      
+      const beats = Math.floor(remainingSixteenths / sixteenthsPerBeat);
+      const sixteenths = remainingSixteenths % sixteenthsPerBeat;
 
-      // Draw playhead
-      const playheadX = (currentTime / duration) * width;
+      // Draw timestamp frame and background
+      const timeText = `${bars + 1}:${beats + 1}:${sixteenths + 1}`;
+      ctx.font = '14px monospace';
+      const textWidth = ctx.measureText(timeText).width;
+      const frameWidth = textWidth + 20;
+      const frameHeight = 20;
+      const frameX = width / 2 - frameWidth / 2;
+      const frameY = 4;
+
+      // Draw frame background
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(frameX, frameY, frameWidth, frameHeight);
+
+      // Draw frame border
+      ctx.strokeStyle = '#404040';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(frameX, frameY, frameWidth, frameHeight);
+
+      // Draw timestamp text
+      ctx.fillStyle = '#808080';
+      ctx.textAlign = 'center';
+      ctx.fillText(timeText, width / 2, 18);
+
+      // Draw playhead relative to scroll position
+      const playheadX = (currentTime - scrollOffset) * pixelsPerSecond;
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(playheadX, 0);
-      ctx.lineTo(playheadX, height);
+      ctx.moveTo(playheadX, topPadding);
+      ctx.lineTo(playheadX, height - numberHeight);
       ctx.stroke();
 
       if (isPlaying) {
-        animationFrameRef.current = requestAnimationFrame(draw);
+        if (animationFrameRef.current !== null) {
+          animationFrameRef.current = requestAnimationFrame(draw);
+        }
       }
     };
 
-    // Initial draw
-    draw();
+    // Start animation loop
+    animationFrameRef.current = requestAnimationFrame(draw);
 
     drawFunctionRef.current = draw;
 
@@ -200,6 +287,15 @@ const Timeline = ({
       }
     };
   }, [isPlaying]);
+
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+  }, []);
 
   // Handle resize
   useEffect(() => {

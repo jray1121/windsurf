@@ -106,10 +106,14 @@ function App() {
             top: '50%',
             transform: 'translateY(-50%)',
             zIndex: 2,
-            transition: darkTheme.transitions.create('left', {
-              easing: darkTheme.transitions.easing.sharp,
-              duration: darkTheme.transitions.duration.leavingScreen,
-            })
+            opacity: 0,
+            transition: theme => theme.transitions.create(['left', 'opacity'], {
+              easing: theme.transitions.easing.sharp,
+              duration: theme.transitions.duration.leavingScreen,
+            }),
+            '&:hover': {
+              opacity: 1
+            }
           }}
         >
           <IconButton
