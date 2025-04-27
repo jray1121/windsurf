@@ -1,12 +1,12 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
-import { Box, Paper, Typography, Button, Stack, Chip } from '@mui/material';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import StopIcon from '@mui/icons-material/Stop';
-import PauseIcon from '@mui/icons-material/Pause';
+import { Box, Paper, Typography, Stack, Chip, IconButton } from '@mui/material';
+
 import Timeline from './Timeline';
 import TrackDisplay from './TrackDisplay';
+import Transport from './Transport';
 import { detectBeats } from '../utils/beatAnalysis';
+import { generateWaveformData } from '../utils/waveform';
 
 const DAW = ({ song }) => {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -18,6 +18,8 @@ const DAW = ({ song }) => {
   const [beats, setBeats] = useState([]);
   const [timeSignature, setTimeSignature] = useState('4/4');
   const [clickEnabled, setClickEnabled] = useState(true);
+  const [trackStates, setTrackStates] = useState({});
+  const [waveforms, setWaveforms] = useState({});
 
   const audioContext = useRef(null);
   const audioBuffers = useRef({});
@@ -25,6 +27,7 @@ const DAW = ({ song }) => {
   const startTime = useRef(0);
   const pauseTime = useRef(0);
   const animationFrame = useRef(null);
+  const clickTrackRef = useRef(null);
 
   // Group tracks by type
   const tracksByType = song.tracks.reduce((acc, track) => {
@@ -88,41 +91,64 @@ const DAW = ({ song }) => {
         audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
         
         // Load all available tracks
-        const tracks = [pianoTrack, allVocalsTrack, tenor1Track, tenor2Track, bassTrack, clickTrack].filter(Boolean);
+        const tracks = [pianoTrack, allVocalsTrack, tenor1Track, tenor2Track, bassTrack].filter(Boolean);
         
+        // Create a temporary object to store all waveforms
+        const newWaveforms = {};
+
         // Load each track
-        await Promise.all(tracks.map(async (track) => {
+        for (const track of tracks) {
           try {
+            console.log(`Loading track: ${track.type}`);
             const response = await fetch(`http://localhost:8080${track.filePath}`);
             const arrayBuffer = await response.arrayBuffer();
-            const buffer = await audioContext.current.decodeAudioData(arrayBuffer);
-            audioBuffers.current[track.type] = buffer;
+            const audioBuffer = await audioContext.current.decodeAudioData(arrayBuffer);
+            audioBuffers.current[track.type] = audioBuffer;
+
+            // Generate waveform data
+            console.log(`Generating waveform for ${track.type}`);
+            const waveformData = await generateWaveformData(audioBuffer, bpm);
+            console.log(`Waveform data for ${track.type}:`, waveformData);
+            newWaveforms[track.type] = waveformData;
 
             // Set duration based on piano track
             if (track.type === 'piano') {
-              setDuration(buffer.duration);
+              setDuration(audioBuffer.duration);
             }
           } catch (err) {
             console.error(`Error loading ${track.type} track:`, err);
           }
-        }));
+        }
+
+        // Update all waveforms at once
+        console.log('Setting all waveforms:', newWaveforms);
+        setWaveforms(newWaveforms);
+
+        // Load click track separately without waveform
+        if (clickTrack) {
+          const response = await fetch(`http://localhost:8080${clickTrack.filePath}`);
+          const arrayBuffer = await response.arrayBuffer();
+          const audioBuffer = await audioContext.current.decodeAudioData(arrayBuffer);
+          audioBuffers.current.click = audioBuffer;
+        }
 
         setIsLoading(false);
       } catch (err) {
         console.error('Error initializing audio:', err);
-        setError('Failed to load audio files');
+        setError('Failed to initialize audio');
         setIsLoading(false);
       }
     };
 
     initAudio();
 
+    // Cleanup
     return () => {
       if (audioContext.current) {
         audioContext.current.close();
       }
     };
-  }, [pianoTrack, allVocalsTrack, tenor1Track, tenor2Track, bassTrack, clickTrack]);
+  }, [pianoTrack, allVocalsTrack, tenor1Track, tenor2Track, bassTrack, clickTrack, bpm]);
 
   // Update current time during playback
   useEffect(() => {
@@ -164,21 +190,34 @@ const DAW = ({ song }) => {
 
       // Create gain node for volume control
       const gainNode = audioContext.current.createGain();
+      const panNode = audioContext.current.createStereoPanner();
       source.connect(gainNode);
-      gainNode.connect(audioContext.current.destination);
+      gainNode.connect(panNode);
+      panNode.connect(audioContext.current.destination);
 
-      // Mute click track if disabled
+      // Apply track state settings
+      const trackState = trackStates[trackType] || {};
       if (trackType === 'click') {
         gainNode.gain.value = clickEnabled ? 1 : 0;
+      } else {
+        gainNode.gain.value = trackState.muted ? 0 : (trackState.volume || 1);
+        panNode.pan.value = trackState.pan || 0;
       }
 
-      // Store source and gain node references
-      audioSources.current[trackType] = { source, gainNode };
+      // Store source, gain node, and pan node references
+      audioSources.current[trackType] = { source, gainNode, panNode };
 
       // Calculate start time
       const offset = pauseTime.current;
       if (trackType === 'piano') { // Use piano track as time reference
         startTime.current = audioContext.current.currentTime - offset;
+        // Synchronize click track with audio context
+        if (clickTrackRef.current) {
+          clickTrackRef.current.currentTime = offset;
+          if (clickEnabled) {
+            clickTrackRef.current.play();
+          }
+        }
       }
 
       // Start playback
@@ -199,6 +238,10 @@ const DAW = ({ song }) => {
 
     // Store pause time based on piano track
     pauseTime.current = audioContext.current.currentTime - startTime.current;
+    // Pause click track
+    if (clickTrackRef.current) {
+      clickTrackRef.current.pause();
+    }
     setIsPlaying(false);
   }, []);
 
@@ -213,6 +256,11 @@ const DAW = ({ song }) => {
 
     // Reset playback state
     pauseTime.current = 0;
+    // Stop and reset click track
+    if (clickTrackRef.current) {
+      clickTrackRef.current.pause();
+      clickTrackRef.current.currentTime = 0;
+    }
     setIsPlaying(false);
     setCurrentTime(0);
   }, []);
@@ -224,6 +272,24 @@ const DAW = ({ song }) => {
     pauseTime.current = time;
     setCurrentTime(time);
   }, [isPlaying, handlePause]);
+
+  const formatTime = useCallback((timeInSeconds) => {
+    const beatsPerSecond = bpm / 60;
+    const totalBeats = timeInSeconds * beatsPerSecond;
+    
+    const sixteenthsPerBeat = 4;
+    const totalSixteenths = Math.floor(totalBeats * sixteenthsPerBeat);
+    
+    const [beatsPerBar] = timeSignature.split('/').map(Number);
+    const sixteenthsPerBar = beatsPerBar * sixteenthsPerBeat;
+    const bars = Math.floor(totalSixteenths / sixteenthsPerBar);
+    const remainingSixteenths = totalSixteenths % sixteenthsPerBar;
+    
+    const beats = Math.floor(remainingSixteenths / sixteenthsPerBeat);
+    const sixteenths = remainingSixteenths % sixteenthsPerBeat;
+
+    return `${bars + 1}:${beats + 1}:${sixteenths + 1}`;
+  }, [bpm, timeSignature]);
 
   return (
     <Paper 
@@ -255,116 +321,287 @@ const DAW = ({ song }) => {
         </Stack>
       </Box>
 
-      <Box sx={{ p: 2, flex: 1, display: 'flex', flexDirection: 'column', gap: 2, overflow: 'auto' }}>
-        <Box sx={{ minHeight: 60 }}>          
-          <Timeline 
-            currentTime={currentTime}
-            duration={duration}
-            isPlaying={isPlaying}
-            bpm={bpm}
-            timeSignature={timeSignature}
-            onSeek={handleSeek}
-            beats={beats}
-          />
-        </Box>
+      <Box sx={{ p: 2, flex: 1, display: 'flex', flexDirection: 'column', gap: 2, overflow: 'hidden' }}>
+        {/* Timeline and tracks container */}
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, overflow: 'auto', position: 'relative' }}>
+          {/* Timeline aligned with waveforms */}
+          <Box sx={{ display: 'flex' }}>
+            {/* Transport controls */}
+            <Box sx={{ width: 280, display: 'flex', alignItems: 'flex-start', pl: 1, pt: '12px' }}>
+              <Transport
+                currentTime={formatTime(currentTime)}
+                isPlaying={isPlaying}
+                onPlay={handlePlay}
+                onPause={handlePause}
+                onStop={handleStop}
+              />
+            </Box>
 
-        {/* Click Track Toggle */}
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Button
-            size="small"
-            variant="text"
-            color={clickEnabled ? "primary" : "inherit"}
-            onClick={() => {
-              setClickEnabled(!clickEnabled);
-              // Update click track volume if playing
-              if (isPlaying && audioSources.current.click) {
-                audioSources.current.click.gainNode.gain.value = !clickEnabled ? 1 : 0;
-              }
-            }}
-            sx={{
-              px: 2,
-              py: 0.5,
-              borderRadius: '16px',
-              backgroundColor: theme => clickEnabled ? theme.palette.primary.main + '10' : 'transparent',
-              '&:hover': {
-                backgroundColor: theme => clickEnabled ? theme.palette.primary.main + '20' : theme.palette.action.hover
-              }
-            }}
-          >
-            {clickEnabled ? '🎯 Click Track' : '⚪ Click Track'}
-          </Button>
-        </Box>
+            
+            {/* Timeline */}
+            <Box sx={{ flex: 1, minHeight: 60 }}>
+              <Timeline 
+                currentTime={currentTime}
+                duration={duration}
+                isPlaying={isPlaying}
+                bpm={bpm}
+                timeSignature={timeSignature}
+                onSeek={handleSeek}
+                beats={beats}
+              />
+            </Box>
+          </Box>
 
-        {/* Tracks */}
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, flex: 1 }}>
-          {/* Core tracks */}
-          {pianoTrack && (
-            <TrackDisplay
-              title="Piano"
-              color="#9c27b0"
-            />
-          )}
-          {allVocalsTrack && (
+          {/* Tracks */}
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            {/* Core tracks */}
+            {/* Piano track */}
+            {pianoTrack && (
+              <TrackDisplay
+                title="Piano"
+                color="#9c27b0"
+                waveformData={waveforms.piano}
+                onVolumeChange={(volume) => {
+                  setTrackStates(prev => ({
+                    ...prev,
+                    piano: { ...prev.piano, volume }
+                  }));
+                  if (audioSources.current.piano) {
+                    audioSources.current.piano.gainNode.gain.value = volume;
+                  }
+                }}
+                onPanChange={(pan) => {
+                  setTrackStates(prev => ({
+                    ...prev,
+                    piano: { ...prev.piano, pan }
+                  }));
+                  if (audioSources.current.piano) {
+                    audioSources.current.piano.panNode.pan.value = pan;
+                  }
+                }}
+                onMute={(muted) => {
+                  setTrackStates(prev => ({
+                    ...prev,
+                    piano: { ...prev.piano, muted }
+                  }));
+                  if (audioSources.current.piano) {
+                    audioSources.current.piano.gainNode.gain.value = muted ? 0 : (trackStates.piano?.volume || 1);
+                  }
+                }}
+                onSolo={(solo) => {
+                  // Implement solo logic here
+                  console.log('Piano solo:', solo);
+                }}
+              />
+            )}
+
+            {/* Vocal tracks */}
+            {allVocalsTrack && (
             <TrackDisplay
               title="All Vocals"
               color="#2196f3"
+              waveformData={waveforms.all_vocals}
+              onVolumeChange={(volume) => {
+                setTrackStates(prev => ({
+                  ...prev,
+                  all_vocals: { ...prev.all_vocals, volume }
+                }));
+                if (audioSources.current.all_vocals) {
+                  audioSources.current.all_vocals.gainNode.gain.value = volume;
+                }
+              }}
+              onPanChange={(pan) => {
+                setTrackStates(prev => ({
+                  ...prev,
+                  all_vocals: { ...prev.all_vocals, pan }
+                }));
+                if (audioSources.current.all_vocals) {
+                  audioSources.current.all_vocals.panNode.pan.value = pan;
+                }
+              }}
+              onMute={(muted) => {
+                setTrackStates(prev => ({
+                  ...prev,
+                  all_vocals: { ...prev.all_vocals, muted }
+                }));
+                if (audioSources.current.all_vocals) {
+                  audioSources.current.all_vocals.gainNode.gain.value = muted ? 0 : (trackStates.all_vocals?.volume || 1);
+                }
+              }}
+              onSolo={(solo) => {
+                // Implement solo logic here
+                console.log('All Vocals solo:', solo);
+              }}
             />
           )}
 
-          {/* Voice parts */}
-          {tenor1Track && (
+            {/* Individual vocal tracks */}
+            {/* All vocals track */}
+            {allVocalsTrack && (
+              <TrackDisplay
+                title="All Vocals"
+                color="#2196f3"
+                waveformData={waveforms.all_vocals}
+                onVolumeChange={(volume) => {
+                  setTrackStates(prev => ({
+                    ...prev,
+                    all_vocals: { ...prev.all_vocals, volume }
+                  }));
+                  if (audioSources.current.all_vocals) {
+                    audioSources.current.all_vocals.gainNode.gain.value = volume;
+                  }
+                }}
+                onPanChange={(pan) => {
+                  setTrackStates(prev => ({
+                    ...prev,
+                    all_vocals: { ...prev.all_vocals, pan }
+                  }));
+                  if (audioSources.current.all_vocals) {
+                    audioSources.current.all_vocals.panNode.pan.value = pan;
+                  }
+                }}
+                onMute={(muted) => {
+                  setTrackStates(prev => ({
+                    ...prev,
+                    all_vocals: { ...prev.all_vocals, muted }
+                  }));
+                  if (audioSources.current.all_vocals) {
+                    audioSources.current.all_vocals.gainNode.gain.value = muted ? 0 : (trackStates.all_vocals?.volume || 1);
+                  }
+                }}
+                onSolo={(solo) => {
+                  // Implement solo logic here
+                  console.log('All Vocals solo:', solo);
+                }}
+              />
+            )}
+
+            {/* Individual vocal tracks */}
+            {tenor1Track && (
             <TrackDisplay
               title="Tenor 1"
               color="#4caf50"
+              waveformData={waveforms.tenor_1}
+              onVolumeChange={(volume) => {
+                setTrackStates(prev => ({
+                  ...prev,
+                  tenor_1: { ...prev.tenor_1, volume }
+                }));
+                if (audioSources.current.tenor_1) {
+                  audioSources.current.tenor_1.gainNode.gain.value = volume;
+                }
+              }}
+              onPanChange={(pan) => {
+                setTrackStates(prev => ({
+                  ...prev,
+                  tenor_1: { ...prev.tenor_1, pan }
+                }));
+                if (audioSources.current.tenor_1) {
+                  audioSources.current.tenor_1.panNode.pan.value = pan;
+                }
+              }}
+              onMute={(muted) => {
+                setTrackStates(prev => ({
+                  ...prev,
+                  tenor_1: { ...prev.tenor_1, muted }
+                }));
+                if (audioSources.current.tenor_1) {
+                  audioSources.current.tenor_1.gainNode.gain.value = muted ? 0 : (trackStates.tenor_1?.volume || 1);
+                }
+              }}
+              onSolo={(solo) => {
+                // Implement solo logic here
+                console.log('Tenor 1 solo:', solo);
+              }}
             />
           )}
-          {tenor2Track && (
+            {tenor2Track && (
             <TrackDisplay
               title="Tenor 2"
               color="#ff9800"
+              waveformData={waveforms.tenor_2}
+              onVolumeChange={(volume) => {
+                setTrackStates(prev => ({
+                  ...prev,
+                  tenor_2: { ...prev.tenor_2, volume }
+                }));
+                if (audioSources.current.tenor_2) {
+                  audioSources.current.tenor_2.gainNode.gain.value = volume;
+                }
+              }}
+              onPanChange={(pan) => {
+                setTrackStates(prev => ({
+                  ...prev,
+                  tenor_2: { ...prev.tenor_2, pan }
+                }));
+                if (audioSources.current.tenor_2) {
+                  audioSources.current.tenor_2.panNode.pan.value = pan;
+                }
+              }}
+              onMute={(muted) => {
+                setTrackStates(prev => ({
+                  ...prev,
+                  tenor_2: { ...prev.tenor_2, muted }
+                }));
+                if (audioSources.current.tenor_2) {
+                  audioSources.current.tenor_2.gainNode.gain.value = muted ? 0 : (trackStates.tenor_2?.volume || 1);
+                }
+              }}
+              onSolo={(solo) => {
+                // Implement solo logic here
+                console.log('Tenor 2 solo:', solo);
+              }}
             />
           )}
-          {bassTrack && (
-            <TrackDisplay
-              title="Bass"
-              color="#f44336"
+            {bassTrack && (
+              <TrackDisplay
+                title="Bass"
+                color="#f44336"
+                waveformData={waveforms.bass}
+                onVolumeChange={(volume) => {
+                  setTrackStates(prev => ({
+                    ...prev,
+                    bass: { ...prev.bass, volume }
+                  }));
+                  if (audioSources.current.bass) {
+                    audioSources.current.bass.gainNode.gain.value = volume;
+                  }
+                }}
+                onPanChange={(pan) => {
+                  setTrackStates(prev => ({
+                    ...prev,
+                    bass: { ...prev.bass, pan }
+                  }));
+                  if (audioSources.current.bass) {
+                    audioSources.current.bass.panNode.pan.value = pan;
+                  }
+                }}
+                onMute={(muted) => {
+                  setTrackStates(prev => ({
+                    ...prev,
+                    bass: { ...prev.bass, muted }
+                  }));
+                  if (audioSources.current.bass) {
+                    audioSources.current.bass.gainNode.gain.value = muted ? 0 : (trackStates.bass?.volume || 1);
+                  }
+                }}
+                onSolo={(solo) => {
+                  // Implement solo logic here
+                  console.log('Bass solo:', solo);
+                }}
+              />
+            )}
+
+            {/* Click track (hidden) */}
+            <audio
+              ref={clickTrackRef}
+              src={clickTrack ? `http://localhost:8080${clickTrack.filePath}` : ''}
+              loop
             />
-          )}
+          </Box>
         </Box>
 
-        <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
-          <Stack direction="row" spacing={1}>
-            {!isPlaying ? (
-              <Button 
-                variant="contained" 
-                color="primary" 
-                disabled={!pianoTrack || isLoading}
-                onClick={handlePlay}
-                startIcon={<PlayArrowIcon />}
-              >
-                Play
-              </Button>
-            ) : (
-              <Button 
-                variant="contained" 
-                color="primary" 
-                disabled={!pianoTrack || isLoading}
-                onClick={handlePause}
-                startIcon={<PauseIcon />}
-              >
-                Pause
-              </Button>
-            )}
-            <Button 
-              variant="contained" 
-              disabled={!pianoTrack || (!isPlaying && currentTime === 0)}
-              onClick={handleStop}
-              startIcon={<StopIcon />}
-            >
-              Stop
-            </Button>
-          </Stack>
-        </Stack>
+
       </Box>
     </Paper>
   );

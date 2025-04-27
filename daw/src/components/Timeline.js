@@ -134,7 +134,7 @@ const Timeline = ({
 
   // Constants
   const numberHeight = 20; // Space for measure numbers at bottom
-  const topPadding = 24; // Space for timestamp above timeline
+  const topPadding = 8; // Space for timestamp above timeline
 
   // Draw timeline
   useEffect(() => {
@@ -182,6 +182,9 @@ const Timeline = ({
       // Calculate pixels per second to show exactly 12 measures
       const pixelsPerSecond = width / visibleDuration;
 
+      // Add initial offset for measure numbers
+      const initialOffset = 20;
+
       // Draw beat lines and measure numbers for visible range
       beatPositions.forEach(({ time, isMeasureStart, measureNumber }) => {
         // Adjust time relative to scroll offset
@@ -202,9 +205,9 @@ const Timeline = ({
         // Draw measure number on measure start
         if (isMeasureStart) {
           ctx.fillStyle = '#808080';
-          ctx.font = '16px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText(measureNumber.toString(), x, height - 4);
+          ctx.font = '12px Arial';
+          ctx.textAlign = 'left';
+          ctx.fillText(measureNumber.toString(), x - 8, height - 6);
         }
       });
 
@@ -221,31 +224,10 @@ const Timeline = ({
       const beats = Math.floor(remainingSixteenths / sixteenthsPerBeat);
       const sixteenths = remainingSixteenths % sixteenthsPerBeat;
 
-      // Draw timestamp frame and background
-      const timeText = `${bars + 1}:${beats + 1}:${sixteenths + 1}`;
-      ctx.font = '14px monospace';
-      const textWidth = ctx.measureText(timeText).width;
-      const frameWidth = textWidth + 20;
-      const frameHeight = 20;
-      const frameX = width / 2 - frameWidth / 2;
-      const frameY = 4;
 
-      // Draw frame background
-      ctx.fillStyle = '#1a1a1a';
-      ctx.fillRect(frameX, frameY, frameWidth, frameHeight);
-
-      // Draw frame border
-      ctx.strokeStyle = '#404040';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(frameX, frameY, frameWidth, frameHeight);
-
-      // Draw timestamp text
-      ctx.fillStyle = '#808080';
-      ctx.textAlign = 'center';
-      ctx.fillText(timeText, width / 2, 18);
 
       // Draw playhead relative to scroll position
-      const playheadX = (currentTime - scrollOffset) * pixelsPerSecond;
+        const playheadX = (currentTime - scrollOffset) * pixelsPerSecond;
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = 2;
       ctx.beginPath();
